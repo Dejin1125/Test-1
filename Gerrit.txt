@@ -1,0 +1,177 @@
+https://www.jianshu.com/p/b77fd16894b6  代码检视工具Gerrit的日常使用
+
+1, Gerrit是什么？
+
+Gerrit实际上一个Git服务器，它为在其服务器上托管的Git仓库提供一系列权限控制，以及一个用来做Code Review是Web前台页面。当然，其主要功能就是用来做Code Review。
+
+2, Gerrit用户配置
+
+Email激活
+Gerrit账户的设置界面，点击“Contact Information”进入Email Register页面，输入自己的邮箱账户（此邮箱需要与自己的Git配置一致）。可以配置多个Email账号。
+Contact Information
+SSH key配置
+通过以下命令生成并读取本机ssh key:
+ssh-keygen -t rsa
+cat ~/.ssh/id_rsa.pub
+Copy key的内容，在Gerrit账户的设置页面“SSH Public Key”中加入即可。
+
+ssh-key
+3, Gerrit日常使用
+
+3.1 获取代码库
+
+登录Gerrit后在Projects-->List, 选择相应工程your_project，进入该工程的General界面。
+选中“clone with commit-msg hook”和“SSH”:
+
+git clone ssh://your_account@review.xxxxx.com:29418/your_project && scp -p -P 29418 your_account@review.xxxxx.com:hooks/commit-msg cic-android/.git/hooks/
+拷贝以上命令在自己本地Git命令行窗口执行即可拉取库代码。
+
+3.2 Gerrit工作流程
+
+3.2.1 上传一个commit
+
+Gerrit相对Git提供了一个特有的命名空间“refs/for/”用来定义我们的提交上传到哪个branch，且可以用来区分我们的commit是提交到Gerrit进行审核还是直接提交到Git仓库，格式如下：
+
+refs/for/<target-branch>
+Push一个Commit到Gerrit:
+
+$ git commit
+$ git push origin HEAD:refs/for/master
+直接Push一个commit到Git仓库:(我们默认配置成不允许)
+
+$ git commit
+$ git push origin HEAD:master
+当我们的commit Push到Gerrit等待review时，Gerrit会将此commit保存在一个名为“refs/changes/xx/yy/zz”的一个暂存branch中。
+其中zz为这个commit的patch set号，yy是change号，xx是change号的后两位。
+
+例如我们工程中的这个大明同学的提交：
+
+http://review.xxxxx.com:9090/#/c/545/
+一共提交了9次patch，那么第9个patch就保存在一个名为“refs/changes/45/545/9”的branch中。
+
+可以通过Gerrit页面中该commit右上角的Download按钮验证,比如说我们选择“Cherry Pick”, 命令如下：
+
+git fetch ssh://your_account@review.xxxxx.com:29418/your_project refs/changes/45/545/9 && git cherry-pick FETCH_HEAD
+在此，有必要说下几个概念，以便理解：
+
+Change 
+一个Change包含一个Change-Id，这个Id就是通过我们拉取代码库的时候所拷贝的hooks（hooks/commit-msg）自动生成的。
+包含一个或多个Patch Set，以及诸如Owner，Project，Target branch,Comments等信息。
+
+Change-Id
+Change-Id是一串SHA-1字符串。有hooks自动生成在我们的commit message下面：
+
+Feature:Music play.
+BugId:/
+Description:Music play.
+
+Change-Id: I3d087f04d9d94bfaa93b8609b988b300af537497
+在一个project的每个branch中Change Id是唯一的。
+
+Patch Set
+一个Patch Set就是一次commit，Gerrit会将其生成一个Branch暂存。Change中的每提交一个Patch Set表示这个Change的一个新的版本，自动覆盖前一个Patch Set， 默认情况下，仅最后一个Patch Set是有意义的。Code Review通过时，也仅仅是最后一个Patch Set会合并到指定的branch中。
+个人Git工作原则一
+** 永远是基于远程库的最新代码工作，尽量每一步操作（特别是add/commit/push）都通过git pull --rebase获取一下当前最新版本。**
+根据以上原则，建议在将本地commit push到Gerrit之后，立马reset掉，或者重新切换一个新的分支工作。
+
+3.2.2 上传一个新的patch set
+
+当我们的commit被reviewer打回来时，我们可能需要修改并重新提交。
+如果我们的代码在本地分支已经reset掉，可以通过Gerrit页面提供的Download方式获取：
+
+// fetch and checkout the change
+// (checkout command copied from change screen)
+$ git fetch ssh://your_account@review.xxxxx.com:29418/your_project refs/changes/45/545/9 && git checkout FETCH_HEAD
+如果之前是通过切换分支方式工作的，可以重新切换回包含此commit的分支而无需执行上述命令，然后可以在此代码基础上进行修改，重新add，amend commit:
+
+// rework the change
+$ git add <path-of-reworked-file>
+...
+
+// amend commit
+$ git commit --amend
+
+// push patch set
+$ git push origin HEAD:refs/for/master
+3.2.3 添加Reviewers
+
+在Change界面添加相关reviewers.可以考虑使用自动添加reviewers的插件
+
+3.2.4 提交Change
+
+Change一般配置成只有在Code-Review +2 以及Verified +1 的情况下才可以Submit。
+
+Submit时可能会有冲突，界面会提示“Cannot Merge”字样，此时可以先尝试Gerrit页面提供的Rebase功能做一次Rebase操作，如果提示冲突，则需在本地解决冲突后重新提交一个Patch Set到该Change上。
+
+本地Rebase的一种流程:
+
+// update the remote tracking branches
+$ git fetch
+
+// fetch and checkout the change
+// (checkout command copied from change screen)
+$ git fetch ssh://your_account@review.xxxxx.com:29418/your_project  refs/changes/74/67374/2 && git checkout FETCH_HEAD
+
+// do the rebase
+$ git rebase origin/master
+
+// resolve conflicts if needed and stage the conflict resolution
+  ...
+$ git add <path-of-file-with-conflicts-resolved>
+
+// continue the rebase
+$ git rebase --continue
+
+// push the commit with the conflict resolution as new patch set
+$ git push origin HEAD:refs/for/master  
+3.3 多Feature并行开发
+
+Code Review需要时间，开发人员可以在此期间开发其他feature，这就产生了多feature并行开发的状态。
+
+为了保证减少冲突和依赖，每一个feature都应该是在该feature自己的本地分支开发，且此分支是基于远程分支（target branch）的当前HEAD的。 也就是基于远程库的最新代码开发，而不应该依赖于code review中的某个、某些Change。
+
+当然，如果必要，你也可以基于一个正在code review的Change开发新的feature，这样会产生依赖，可以在Gerrit中该Change的页面看到“Related Changes”。这就要求reviewer也需要关注这个依赖关系，调整review时序。
+
+根据以往的使用经验，强烈建议不要产生这种依赖，尽量使每一个Change提交都是无依赖的，避免Change的连环失败导致各种解冲突的工作。
+
+个人Git工作原则二
+** 尽可能保证每一个Change的完整性以及独立性，且越小越好。**
+4, 进阶功能
+
+4.1 Web页面代码修改
+
+Gerrit提供了直接在Web页面修改我们的patch代码的功能，这对于我们做一些小的问题修改（比如格式化问题，命名不对，多余的空格等)非常方便。
+
+Edit
+点击Edit后，该工具栏显示如下：
+
+toolbar
+可以在此对patch的文件进行修改，删除等。
+如果想对文件中的某处进行编辑，点击进入该文件的review界面：
+
+page_edit
+点击编辑按钮，进入编辑模式，编辑完save：
+
+save
+会在Change页面看到，点击Publish Edit按钮，Gerrit会自动帮你生成一个包含刚刚修改的patch。
+
+publish
+patch
+4.2 草稿箱功能
+
+Gerrit可以作为一个自己的Change草稿箱，我们可以将一些还未完成，或者还不想提交review的Change上传至此处。一来可以作为一个备份，另外在多人互相协助完成同一个功能，或是自己在多台电脑（家里、办公室）上处理未完成的工作。
+不同于提交一个正式Change的“refs/for/”协议，提交一个Change到草稿箱的协议方式为“refs/drafts/”,如下：
+
+$ git commit
+$ git push origin HEAD:refs/drafts/luckyair
+在Gerrit页面的Drafts栏：
+
+draft
+草稿箱中的Change也可以很方便的转换为正式的Change，而无需重新用“refs/for/”来提交，点击Publish按钮转换为正式Change，也可以在此删除此草稿。
+
+publish draft
+
+作者：anly_jun
+链接：https://www.jianshu.com/p/b77fd16894b6
+來源：简书
+简书著作权归作者所有，任何形式的转载都请联系作者获得授权并注明出处。
